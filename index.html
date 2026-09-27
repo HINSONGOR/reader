@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#4f46e5">
+<title>英粵雙語朗讀播放器</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style type="text/tailwindcss">
+@layer components {
+  .hdr-btn { @apply inline-flex items-center px-3 h-9 rounded-lg text-sm hover:bg-white/15 active:bg-white/25; }
+  .tab-btn { @apply py-2.5 text-indigo-100 border-b-2 border-transparent; }
+  .tab-btn.is-active { @apply text-white border-white bg-indigo-600; }
+  .icon-btn { @apply inline-flex items-center justify-center w-9 h-9 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-600; }
+  .ctl-btn { @apply flex flex-col items-center justify-center w-14 h-12 rounded-xl text-slate-600 text-lg hover:bg-slate-100 active:scale-95 disabled:opacity-30; }
+  .ctl-btn span { @apply text-[10px] leading-tight mt-0.5; }
+  .ctl-btn.is-on { @apply bg-amber-100 text-amber-700; }
+  .btn { @apply inline-flex items-center justify-center gap-1.5 px-4 h-10 rounded-lg text-sm font-medium active:scale-[.98]; }
+  .btn-primary { @apply bg-indigo-600 text-white hover:bg-indigo-700; }
+  .btn-ghost { @apply bg-slate-100 text-slate-700 hover:bg-slate-200; }
+  .btn-danger { @apply bg-red-600 text-white hover:bg-red-700; }
+  .field-label { @apply flex items-center justify-between text-sm font-medium text-slate-700 mb-1; }
+  .input { @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-500; }
+  .modal { @apply fixed inset-0 z-50 flex items-end sm:items-center justify-center; }
+  .modal-panel { @apply relative bg-white w-full rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] overflow-y-auto p-4 sm:p-5; }
+}
+</style>
+<style>
+  body { -webkit-tap-highlight-color: transparent; }
+  input[type=range] { accent-color: #4f46e5; width: 100%; }
+  .sentence { transition: background-color .2s, border-color .2s, box-shadow .2s; }
+  .sentence.active { background: #fffbeb; border-color: #f59e0b; box-shadow: 0 0 0 3px #fde68a; }
+  .sentence.active .s-text { color: #0f172a; font-weight: 600; }
+  .sentence.active .s-icon { color: #d97706; }
+  .sentence.speaking .s-icon { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<header class="sticky top-0 z-30 bg-indigo-600 text-white shadow">
+  <div class="max-w-6xl mx-auto px-3 md:px-4 h-14 flex items-center gap-2">
+    <i class="fa-solid fa-headphones-simple text-xl"></i>
+    <h1 class="font-bold text-base sm:text-lg truncate">英粵雙語朗讀播放器</h1>
+    <div class="ml-auto flex items-center gap-1">
+      <button id="btnExport" class="hdr-btn" title="匯出 JSON 備份"><i class="fa-solid fa-file-export"></i><span class="hidden sm:inline ml-1.5">匯出</span></button>
+      <button id="btnImport" class="hdr-btn" title="匯入 JSON 備份"><i class="fa-solid fa-file-import"></i><span class="hidden sm:inline ml-1.5">匯入</span></button>
+      <input type="file" id="fileImport" accept="application/json,.json" class="hidden">
+    </div>
+  </div>
+  <nav class="md:hidden grid grid-cols-2 text-sm font-medium bg-indigo-700">
+    <button class="tab-btn" data-tab="library"><i class="fa-solid fa-book mr-1"></i>文稿庫</button>
+    <button class="tab-btn" data-tab="player"><i class="fa-solid fa-circle-play mr-1"></i>播放器</button>
+  </nav>
+</header>
+
+<div id="iosHint" class="hidden bg-amber-100 text-amber-900 text-sm text-center py-2 px-3">
+  <i class="fa-solid fa-volume-high mr-1"></i>iPhone / iPad：請先輕觸畫面任何位置以啟用語音
+</div>
+<div id="noSpeech" class="hidden bg-red-100 text-red-800 text-sm text-center py-2 px-3">
+  <i class="fa-solid fa-triangle-exclamation mr-1"></i>此瀏覽器不支援語音合成 (Web Speech API)，請改用 Chrome、Edge 或 Safari。
+</div>
+
+<main class="max-w-6xl mx-auto p-3 md:p-4 md:grid md:grid-cols-[340px_minmax(0,1fr)] md:gap-4 md:items-start">
+
+  <!-- 文稿庫 -->
+  <section id="panelLibrary" class="md:block md:sticky md:top-[4.5rem]">
+    <div class="flex items-center gap-2 mb-3">
+      <h2 class="text-lg font-bold">文稿庫</h2>
+      <span id="docCount" class="text-xs bg-slate-200 text-slate-600 rounded-full px-2 py-0.5">0</span>
+      <button id="btnNew" class="btn btn-primary ml-auto h-9 px-3"><i class="fa-solid fa-plus"></i>新增文稿</button>
+    </div>
+    <div class="relative mb-3">
+      <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+      <input id="search" type="search" class="input pl-9 py-1.5" placeholder="搜尋標題或內容…">
+    </div>
+    <div id="docList" class="space-y-2 md:max-h-[calc(100vh-12rem)] md:overflow-y-auto md:pr-1 pb-4"></div>
+    <p class="text-xs text-slate-500 mt-1 mb-6"><i class="fa-solid fa-floppy-disk mr-1"></i>文稿自動儲存於此瀏覽器 (LocalStorage)。換機或清除瀏覽資料前，請先「匯出」備份。</p>
+  </section>
+
+  <!-- 播放器 -->
+  <section id="panelPlayer" class="hidden md:block">
+    <div class="bg-white rounded-2xl shadow-sm border p-4">
+      <div class="flex items-start gap-3">
+        <div class="min-w-0 flex-1">
+          <p class="text-xs text-indigo-600 font-semibold">正在學習</p>
+          <h2 id="playerTitle" class="text-lg font-bold truncate">未選擇文稿</h2>
+          <p id="playerMeta" class="text-xs text-slate-500"></p>
+        </div>
+        <button id="btnEditCurrent" class="icon-btn" title="編輯此文稿"><i class="fa-solid fa-pen"></i></button>
+      </div>
+    </div>
+
+    <details id="settingsBox" class="group bg-white rounded-2xl shadow-sm border mt-3">
+      <summary class="px-4 py-3 cursor-pointer font-semibold flex items-center gap-2 select-none">
+        <i class="fa-solid fa-sliders text-indigo-600"></i>聲音與語速設定
+        <span id="settingsSummary" class="ml-auto text-xs text-slate-500 font-normal"></span>
+        <i class="fa-solid fa-chevron-down text-xs text-slate-400 transition-transform group-open:rotate-180"></i>
+      </summary>
+      <div class="px-4 pb-4 grid sm:grid-cols-2 gap-x-6 gap-y-4">
+        <div>
+          <div class="field-label"><span><i class="fa-solid fa-gauge-high mr-1 text-slate-400"></i>語速</span><span id="rateVal" class="tabular-nums text-indigo-600">1.00x</span></div>
+          <input id="rate" type="range" min="0.5" max="1.5" step="0.05">
+        </div>
+        <div>
+          <div class="field-label"><span><i class="fa-solid fa-wave-square mr-1 text-slate-400"></i>音高 (Pitch)</span><span id="pitchVal" class="tabular-nums text-indigo-600">1.0</span></div>
+          <input id="pitch" type="range" min="0.5" max="2" step="0.1">
+        </div>
+        <div class="sm:col-span-2">
+          <div class="field-label"><span><i class="fa-solid fa-microphone-lines mr-1 text-slate-400"></i>句間停頓（跟讀時間）</span><span id="gapVal" class="tabular-nums text-indigo-600">0.5 秒</span></div>
+          <input id="gap" type="range" min="0" max="8" step="0.5">
+        </div>
+        <div>
+          <div class="field-label"><span>🇬🇧 英語聲音</span></div>
+          <div class="flex gap-2">
+            <select id="voiceEn" class="input py-1.5 text-sm min-w-0"></select>
+            <button class="btn btn-ghost h-auto px-3 shrink-0" data-test="en"><i class="fa-solid fa-ear-listen"></i>試聽</button>
+          </div>
+        </div>
+        <div>
+          <div class="field-label"><span>🇭🇰 廣東話聲音</span></div>
+          <div class="flex gap-2">
+            <select id="voiceYue" class="input py-1.5 text-sm min-w-0"></select>
+            <button class="btn btn-ghost h-auto px-3 shrink-0" data-test="yue"><i class="fa-solid fa-ear-listen"></i>試聽</button>
+          </div>
+        </div>
+        <div id="voiceWarn" class="hidden sm:col-span-2 text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-3 leading-relaxed">
+          <b><i class="fa-solid fa-circle-info mr-1"></i>找不到廣東話 (zh-HK) 語音。</b>請於系統安裝後重新開啟本頁：<br>
+          • iPhone／iPad：設定 › 輔助使用 › 朗讀內容 › 聲音 › 中文（香港）<br>
+          • Android：設定 › 文字轉語音 › Google 語音服務 › 安裝粵語（香港）<br>
+          • Windows：設定 › 時間與語言 › 語音 › 新增語音 › 中文（香港特別行政區）
+        </div>
+        <div class="sm:col-span-2 text-right">
+          <button id="btnResetSettings" class="text-xs text-slate-500 hover:text-indigo-600"><i class="fa-solid fa-rotate-left mr-1"></i>重設為預設值</button>
+        </div>
+      </div>
+    </details>
+
+    <div id="playerEmpty" class="bg-white rounded-2xl border border-dashed p-8 text-center text-slate-500 mt-3">
+      <i class="fa-solid fa-book-open text-3xl mb-2 text-slate-300"></i>
+      <p>請從「文稿庫」選擇一篇文稿開始學習</p>
+    </div>
+    <ol id="sentenceList" class="mt-3 space-y-2 pb-3"></ol>
+
+    <div id="controlBar" class="sticky bottom-0 z-20 -mx-3 md:mx-0 bg-white/95 backdrop-blur border-t md:border md:rounded-2xl shadow-[0_-4px_16px_rgba(0,0,0,.06)] px-3 pt-2" style="padding-bottom: calc(0.25rem + env(safe-area-inset-bottom));">
+      <div class="flex items-center gap-2 text-xs text-slate-500">
+        <span id="statusText">待機</span>
+        <span id="loopInfo" class="text-amber-600 font-medium"></span>
+        <span id="progressText" class="ml-auto tabular-nums">0 / 0</span>
+      </div>
+      <div class="h-1.5 bg-slate-200 rounded-full mt-1 overflow-hidden"><div id="progressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width:0%"></div></div>
+      <div class="flex items-center justify-center gap-1 sm:gap-3 py-2">
+        <button id="btnLoop" class="ctl-btn" title="單句循環跟讀 (L)"><i class="fa-solid fa-repeat"></i><span>單句循環</span></button>
+        <button id="btnPrev" class="ctl-btn" title="上一句 (←)"><i class="fa-solid fa-backward-step"></i><span>上一句</span></button>
+        <button id="btnPlay" class="w-14 h-14 mx-1 rounded-full bg-indigo-600 text-white text-xl shadow-md hover:bg-indigo-700 active:scale-95 disabled:opacity-40" title="播放 / 暫停 (空白鍵)"><i class="fa-solid fa-play"></i></button>
+        <button id="btnNext" class="ctl-btn" title="下一句 (→)"><i class="fa-solid fa-forward-step"></i><span>下一句</span></button>
+        <button id="btnStop" class="ctl-btn" title="停止"><i class="fa-solid fa-stop"></i><span>停止</span></button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- 編輯器 -->
+<div id="editorModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="absolute inset-0 bg-slate-900/50" data-close></div>
+  <div class="modal-panel sm:max-w-2xl">
+    <div class="flex items-center mb-3">
+      <h3 id="editorHeading" class="text-lg font-bold">新增文稿</h3>
+      <button class="icon-btn ml-auto" data-close title="關閉"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <label class="block mb-3">
+      <span class="field-label">標題</span>
+      <input id="edTitle" class="input" maxlength="80" placeholder="例如：Daily English 日常對話">
+    </label>
+    <label class="block">
+      <span class="field-label">內容 <span id="edCount" class="text-xs text-slate-500 font-normal"></span></span>
+      <textarea id="edContent" class="input h-64 sm:h-80 leading-relaxed" placeholder="貼上英文或廣東話文稿…&#10;系統會按 . ! ? 。！？； 及換行自動分句，並自動判斷每句語言。"></textarea>
+    </label>
+    <p class="text-xs text-slate-500 mt-2">提示：中英對照可每行一句，例如「How are you?」下一行「你好嗎？」。</p>
+    <div class="flex justify-end gap-2 mt-4">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button id="edSave" class="btn btn-primary"><i class="fa-solid fa-check"></i>儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 確認彈窗 -->
+<div id="dialogModal" class="modal hidden" role="alertdialog" aria-modal="true">
+  <div class="absolute inset-0 bg-slate-900/50"></div>
+  <div class="modal-panel sm:max-w-sm">
+    <h3 id="dlgTitle" class="text-lg font-bold mb-2"></h3>
+    <p id="dlgMsg" class="text-sm text-slate-600 leading-relaxed whitespace-pre-line"></p>
+    <div id="dlgButtons" class="flex justify-end flex-wrap gap-2 mt-5"></div>
+  </div>
+</div>
+
+<div id="toast" class="fixed left-1/2 -translate-x-1/2 bottom-32 z-[60] px-4 py-2 rounded-full text-sm text-white shadow-lg opacity-0 pointer-events-none transition-opacity duration-300"></div>
+
+<script>
+'use strict';
+
+/* ================== 基本設定 ================== */
+const $ = s => document.querySelector(s);
+const synth = window.speechSynthesis || null;
+const LS_DOCS = 'bilingualReader.docs.v1';
+const LS_SET = 'bilingualReader.settings.v1';
+const LS_LAST = 'bilingualReader.lastDoc.v1';
+const DEFAULT_SETTINGS = { rate: 0.9, pitch: 1, gap: 0.5, voiceEn: '', voiceYue: '' };
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_MOBILE = IS_IOS || /Android/i.test(navigator.userAgent);
+
+/* 舊版內建範例文稿的標題：瀏覽器中如仍存有，啟動時清除一次 */
+const LS_PURGED = 'bilingualReader.samplesPurged.v1';
+const OLD_SAMPLE_TITLES = ['Daily English：At the Coffee Shop', '廣東話：香港飲茶文化', '雙語對照 Bilingual：Weekend Plans'];
+
+const state = {
+  docs: [], currentId: null, sentences: [], idx: 0,
+  status: 'idle',          // idle | playing | paused
+  mode: 'all',             // all = 連續播放；single = 只播一句
+  loopOne: false, loopCount: 0, finished: false,
+  token: 0, gapTimer: null, utter: null,
+  voices: [], unlocked: false, tab: 'library', editingId: null, search: '',
+  settings: { ...DEFAULT_SETTINGS }
+};
+
+/* ================== 工具 ================== */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) {
+  try { localStorage.setItem(k, v); return true; }
+  catch (e) { toast('無法儲存到瀏覽器（空間不足或私密瀏覽模式）', 'error'); return false; }
+}
+let toastTimer;
+function toast(msg, type = 'info') {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = el.className.replace(/bg-\S+/g, '') + (type === 'error' ? ' bg-red-600' : type === 'ok' ? ' bg-emerald-600' : ' bg-slate-800');
+  el.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 2400);
+}
+
+/* 通用彈窗：回傳所按按鈕的 value */
+function dialog({ title, message, buttons }) {
+  return new Promise(resolve => {
+    $('#dlgTitle').textContent = title;
+    $('#dlgMsg').textContent = message;
+    const box = $('#dlgButtons');
+    box.innerHTML = '';
+    buttons.forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = 'btn ' + (b.style === 'danger' ? 'btn-danger' : b.style === 'primary' ? 'btn-primary' : 'btn-ghost');
+      btn.innerHTML = b.label;
+      btn.onclick = () => { $('#dialogModal').classList.add('hidden'); resolve(b.value); };
+      box.appendChild(btn);
+    });
+    $('#dialogModal').classList.remove('hidden');
+    box.lastChild.focus();
+  });
+}
+const confirmDialog = (title, message, okLabel = '確定', danger = false) =>
+  dialog({ title, message, buttons: [{ label: '取消', value: false }, { label: okLabel, value: true, style: danger ? 'danger' : 'primary' }] });
+
+/* ================== 分句與語言判斷 ================== */
+const TERM = '。！？!?；;…';
+const CLOSE = '"\'”’」』）)]';
+const ABBR = /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Mt|vs|etc|e\.g|i\.e|a\.m|p\.m)\.$/i;
+
+function splitSentences(text) {
+  const out = [];
+  const push = s => { s = s.trim(); if (s && /[\p{L}\p{N}]/u.test(s)) out.push(s); };
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    let buf = '';
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      buf += c;
+      let cut = TERM.includes(c);
+      if (c === '.') {
+        const n = line[i + 1];
+        // 英文句號：後面是空白 / 行尾 / 收引號才斷句（避免 3.14、U.S.A 被拆開），並略過常見縮寫
+        if ((n === undefined || /\s/.test(n) || CLOSE.includes(n)) && !ABBR.test(buf)) cut = true;
+      }
+      if (cut) {
+        while (i + 1 < line.length && (TERM.includes(line[i + 1]) || line[i + 1] === '.' || CLOSE.includes(line[i + 1]))) buf += line[++i];
+        push(buf);
+        buf = '';
+      }
+    }
+    push(buf);
+  }
+  return out.map(t => ({ text: t, lang: detectLang(t) }));
+}
+
+function detectLang(s) {
+  const cjk = (s.match(/[㐀-鿿豈-﫿]/g) || []).length;
+  const words = (s.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || []).length;
+  return cjk > 0 && cjk * 2 >= words ? 'yue' : 'en';
+}
+
+/* ================== 資料存取 ================== */
+const validDoc = d => d && typeof d.title === 'string' && typeof d.content === 'string';
+
+function loadData() {
+  let docs = null;
+  try { docs = JSON.parse(lsGet(LS_DOCS) || 'null'); } catch (e) { /* 損壞則視為空 */ }
+  state.docs = Array.isArray(docs)
+    ? docs.filter(validDoc).map(d => ({ id: d.id || uid(), title: d.title, content: d.content, updatedAt: d.updatedAt || Date.now() }))
+    : [];
+  if (!lsGet(LS_PURGED)) {
+    const before = state.docs.length;
+    state.docs = state.docs.filter(d => !OLD_SAMPLE_TITLES.includes(d.title));
+    if (state.docs.length !== before) saveDocs();
+    lsSet(LS_PURGED, '1');
+  }
+  try { Object.assign(state.settings, JSON.parse(lsGet(LS_SET) || '{}')); } catch (e) {}
+  state.currentId = lsGet(LS_LAST);
+}
+const saveDocs = () => lsSet(LS_DOCS, JSON.stringify(state.docs));
+const saveSettings = () => lsSet(LS_SET, JSON.stringify(state.settings));
+const getDoc = id => state.docs.find(d => d.id === id);
+
+/* ================== 語音 ================== */
+const isYue = v => /^(zh[-_]HK|yue)/i.test(v.lang) || (/^zh/i.test(v.lang) && /cantonese|粵|廣東|hong ?kong/i.test(v.name));
+const isEn = v => /^en([-_]|$)/i.test(v.lang);
+
+function loadVoices() {
+  if (!synth) return;
+  const v = synth.getVoices();
+  if (!v.length) return;
+  state.voices = v;
+  renderVoiceSelects();
+}
+
+function pickVoice(lang) {
+  const vs = state.voices.length ? state.voices : (synth ? synth.getVoices() : []);
+  const uri = state.settings[lang === 'yue' ? 'voiceYue' : 'voiceEn'];
+  if (uri) { const v = vs.find(v => v.voiceURI === uri); if (v) return v; }
+  if (lang === 'en') {
+    const c = vs.filter(isEn);
+    return c.find(v => /en[-_]US/i.test(v.lang) && v.localService) || c.find(v => /en[-_](US|GB)/i.test(v.lang)) || c[0] || null;
+  }
+  const c = vs.filter(isYue);
+  return c.find(v => v.localService) || c[0] || null;
+}
+
+function makeUtter(text, lang) {
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(lang);
+  if (v) { u.voice = v; u.lang = v.lang.replace('_', '-'); }
+  else u.lang = lang === 'yue' ? 'zh-HK' : 'en-US';
+  u.rate = +state.settings.rate;
+  u.pitch = +state.settings.pitch;
+  u.volume = 1;
+  return u;
+}
+
+/* iOS Safari 音訊解鎖：首次觸控時於使用者手勢內呼叫 speak() */
+const UNLOCK_EVENTS = ['touchend', 'click', 'keydown'];
+function unlockAudio() {
+  if (state.unlocked || !synth) return;
+  state.unlocked = true;
+  try {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    synth.speak(u);
+  } catch (e) {}
+  loadVoices();
+  $('#iosHint').classList.add('hidden');
+  UNLOCK_EVENTS.forEach(ev => document.removeEventListener(ev, unlockAudio, true));
+}
+
+/* ================== 播放核心 ================== */
+function speakAt(i) {
+  if (!synth || !state.sentences.length) return;
+  i = Math.max(0, Math.min(i, state.sentences.length - 1));
+  clearTimeout(state.gapTimer);
+  const token = ++state.token;   // 令舊句子的 onend / onerror 失效
+  state.idx = i;
+  state.status = 'playing';
+  const s = state.sentences[i];
+  const u = makeUtter(s.text, s.lang);
+  u.onstart = () => { if (token === state.token) setSpeaking(true); };
+  u.onend = () => { if (token === state.token) onSentenceEnd(); };
+  u.onerror = e => {
+    if (token !== state.token) return;
+    if (e.error === 'not-allowed') {
+      state.status = 'paused';
+      renderPlayerState();
+      toast('瀏覽器阻擋自動播放，請再按一次播放', 'error');
+      return;
+    }
+    onSentenceEnd();
+  };
+  state.utter = u;   // 保留引用，避免被 GC 後 onend 不觸發
+  synth.cancel();
+  if (synth.paused) synth.resume();
+  synth.speak(u);
+  renderPlayerState();
+  scrollToActive();
+}
+
+function onSentenceEnd() {
+  setSpeaking(false);
+  if (state.status !== 'playing') return;
+  const token = state.token;
+  let next;
+  if (state.loopOne) { next = state.idx; state.loopCount++; }
+  else if (state.mode === 'all' && state.idx < state.sentences.length - 1) next = state.idx + 1;
+  else {
+    state.status = 'idle';
+    state.token++;
+    if (state.mode === 'all') { state.finished = true; toast('全文播放完畢 👏', 'ok'); }
+    renderPlayerState();
+    return;
+  }
+  renderPlayerState();
+  state.gapTimer = setTimeout(() => {
+    if (token === state.token && state.status === 'playing') speakAt(next);
+  }, state.settings.gap * 1000);
+}
+
+function haltSpeech() {
+  state.token++;
+  clearTimeout(state.gapTimer);
+  if (synth) synth.cancel();
+  setSpeaking(false);
+}
+
+function togglePlay() {
+  if (!synth) return toast('此瀏覽器不支援語音', 'error');
+  if (!state.sentences.length) return toast('請先選擇文稿');
+  if (state.status === 'playing') return pause();
+  state.mode = 'all';
+  if (state.status !== 'paused') state.loopCount = 0;
+  const start = state.finished ? 0 : state.idx;
+  state.finished = false;
+  speakAt(start);
+}
+function pause() {
+  haltSpeech();
+  state.status = 'paused';   // 繼續時由該句開頭重新朗讀（跨瀏覽器最穩定，亦方便跟讀）
+  renderPlayerState();
+}
+function stop() {
+  haltSpeech();
+  Object.assign(state, { status: 'idle', idx: 0, loopCount: 0, finished: false });
+  renderPlayerState();
+  scrollToActive();
+}
+function step(d) {
+  const n = state.idx + d;
+  if (n < 0 || n >= state.sentences.length) return;
+  state.loopCount = 0;
+  state.finished = false;
+  if (state.status === 'playing') speakAt(n);
+  else { state.idx = n; renderPlayerState(); scrollToActive(); }
+}
+function playSentence(i) {
+  state.mode = 'single';
+  state.loopCount = 0;
+  state.finished = false;
+  speakAt(i);
+}
+function toggleLoop() {
+  state.loopOne = !state.loopOne;
+  state.loopCount = 0;
+  renderPlayerState();
+  toast(state.loopOne ? '單句循環跟讀：開啟' : '單句循環跟讀：關閉');
+}
+function testVoice(lang) {
+  if (!synth) return;
+  if (state.status === 'playing') pause();
+  haltSpeech();
+  const u = makeUtter(lang === 'yue' ? '你好！呢個係廣東話語音試聽，今日天氣好好。' : 'Hello! This is the English voice preview. Nice to meet you.', lang);
+  state.utter = u;
+  synth.speak(u);
+}
+
+/* Chrome 桌面版的網絡語音約 15 秒後會自動中斷，定時 pause/resume 保活 */
+setInterval(() => {
+  if (!synth || IS_MOBILE || state.status !== 'playing' || !synth.speaking) return;
+  if (state.utter && state.utter.voice && !state.utter.voice.localService) { synth.pause(); synth.resume(); }
+}, 10000);
+
+/* ================== 文稿操作 ================== */
+function openDoc(id, switchTab) {
+  const doc = getDoc(id);
+  haltSpeech();
+  Object.assign(state, { status: 'idle', idx: 0, loopCount: 0, finished: false });
+  state.currentId = doc ? doc.id : null;
+  state.sentences = doc ? splitSentences(doc.content) : [];
+  if (doc) lsSet(LS_LAST, doc.id);
+  renderSentences();
+  renderDocList();
+  renderPlayerState();
+  if (switchTab) setTab('player');
+  window.scrollTo({ top: 0 });
+}
+
+function openEditor(id) {
+  const doc = id ? getDoc(id) : null;
+  state.editingId = doc ? doc.id : null;
+  $('#editorHeading').textContent = doc ? '編輯文稿' : '新增文稿';
+  $('#edTitle').value = doc ? doc.title : '';
+  $('#edContent').value = doc ? doc.content : '';
+  updateEdCount();
+  $('#editorModal').classList.remove('hidden');
+  setTimeout(() => (doc ? $('#edContent') : $('#edTitle')).focus(), 50);
+}
+function closeEditor() { $('#editorModal').classList.add('hidden'); }
+function updateEdCount() {
+  const ss = splitSentences($('#edContent').value);
+  const yue = ss.filter(s => s.lang === 'yue').length;
+  $('#edCount').textContent = ss.length ? `（${ss.length} 句：英 ${ss.length - yue}／粵 ${yue}）` : '';
+}
+function saveEditor() {
+  const content = $('#edContent').value.trim();
+  if (!content) return toast('內容不可空白', 'error');
+  let title = $('#edTitle').value.trim();
+  if (!title) { const first = splitSentences(content)[0]; title = first ? first.text.slice(0, 30) : '未命名文稿'; }
+  let doc = state.editingId && getDoc(state.editingId);
+  if (doc) Object.assign(doc, { title, content, updatedAt: Date.now() });
+  else { doc = { id: uid(), title, content, updatedAt: Date.now() }; state.docs.push(doc); }
+  saveDocs();
+  closeEditor();
+  toast('已儲存', 'ok');
+  openDoc(doc.id, true);
+}
+
+async function deleteDoc(id) {
+  const doc = getDoc(id);
+  if (!doc) return;
+  const ok = await confirmDialog('刪除文稿', `確定刪除「${doc.title}」？\n此操作無法復原，建議先匯出備份。`, '<i class="fa-solid fa-trash"></i>刪除', true);
+  if (!ok) return;
+  state.docs = state.docs.filter(d => d.id !== id);
+  saveDocs();
+  if (state.currentId === id) openDoc(null);
+  else renderDocList();
+  toast('已刪除');
+}
+
+/* ================== 匯出 / 匯入 ================== */
+function exportJSON() {
+  const data = { app: 'bilingual-reader', version: 1, exportedAt: new Date().toISOString(), docs: state.docs, settings: state.settings };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `bilingual-reader-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+  toast(`已匯出 ${state.docs.length} 篇文稿`, 'ok');
+}
+
+async function importJSON(file) {
+  let data;
+  try { data = JSON.parse(await file.text()); }
+  catch (e) { return toast('檔案格式錯誤，無法讀取 JSON', 'error'); }
+  const incoming = (Array.isArray(data) ? data : data && data.docs || []).filter(validDoc);
+  if (!incoming.length) return toast('檔案中沒有有效的文稿', 'error');
+  const choice = await dialog({
+    title: '匯入備份',
+    message: `檔案包含 ${incoming.length} 篇文稿。\n「合併」會加入現有文稿庫；「取代全部」會刪除現有 ${state.docs.length} 篇文稿。`,
+    buttons: [
+      { label: '取消', value: null },
+      { label: '取代全部', value: 'replace', style: 'danger' },
+      { label: '合併', value: 'merge', style: 'primary' }
+    ]
+  });
+  if (!choice) return;
+  const norm = d => ({ id: d.id || uid(), title: d.title, content: d.content, updatedAt: d.updatedAt || Date.now() });
+  let added = 0;
+  if (choice === 'replace') {
+    state.docs = incoming.map(norm);
+    added = state.docs.length;
+    if (data.settings && typeof data.settings === 'object') { Object.assign(state.settings, data.settings); saveSettings(); applySettingsToUI(); }
+  } else {
+    for (const d of incoming.map(norm)) {
+      const same = state.docs.find(x => x.id === d.id);
+      if (same && same.content === d.content && same.title === d.title) continue;   // 完全相同則略過
+      if (same) d.id = uid();
+      state.docs.push(d);
+      added++;
+    }
+  }
+  saveDocs();
+  if (!getDoc(state.currentId)) openDoc(null); else renderDocList();
+  toast(`匯入完成：新增 ${added} 篇`, 'ok');
+}
+
+/* ================== 渲染 ================== */
+function renderDocList() {
+  const q = state.search.trim().toLowerCase();
+  const list = state.docs
+    .filter(d => !q || d.title.toLowerCase().includes(q) || d.content.toLowerCase().includes(q))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  $('#docCount').textContent = state.docs.length;
+  const box = $('#docList');
+  if (!state.docs.length) {
+    box.innerHTML = `<div class="bg-white rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">
+      文稿庫是空的<br>按「新增文稿」或「匯入」開始</div>`;
+    return;
+  }
+  if (!list.length) { box.innerHTML = `<p class="text-sm text-slate-500 text-center py-6">找不到符合「${esc(q)}」的文稿</p>`; return; }
+  box.innerHTML = list.map(d => {
+    const ss = splitSentences(d.content);
+    const yue = ss.filter(s => s.lang === 'yue').length;
+    const active = d.id === state.currentId;
+    return `<article class="doc-card bg-white rounded-xl border p-3 shadow-sm cursor-pointer hover:border-indigo-400 transition ${active ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-200'}" data-id="${esc(d.id)}">
+      <div class="flex items-start gap-2">
+        <div class="min-w-0 flex-1">
+          <h3 class="font-semibold truncate">${active ? '<i class="fa-solid fa-circle-play text-indigo-500 mr-1"></i>' : ''}${esc(d.title)}</h3>
+          <p class="text-xs text-slate-500 mt-0.5">${ss.length} 句 · 英 ${ss.length - yue} / 粵 ${yue} · ${new Date(d.updatedAt).toLocaleDateString('zh-HK')}</p>
+          <p class="text-sm text-slate-600 mt-1 line-clamp-2 break-words">${esc(d.content.slice(0, 160))}</p>
+        </div>
+        <div class="flex flex-col gap-1 shrink-0">
+          <button class="icon-btn" data-action="edit" title="編輯"><i class="fa-solid fa-pen"></i></button>
+          <button class="h-9 px-2 rounded-lg text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100" data-action="delete" title="刪除"><i class="fa-solid fa-trash-can mr-0.5"></i>Del</button>
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderSentences() {
+  const doc = getDoc(state.currentId);
+  $('#playerTitle').textContent = doc ? doc.title : '未選擇文稿';
+  const yue = state.sentences.filter(s => s.lang === 'yue').length;
+  $('#playerMeta').textContent = doc ? `共 ${state.sentences.length} 句（英 ${state.sentences.length - yue}／粵 ${yue}）· 點擊句子可單獨播放` : '';
+  $('#btnEditCurrent').classList.toggle('invisible', !doc);
+  $('#playerEmpty').classList.toggle('hidden', !!doc);
+  $('#sentenceList').innerHTML = state.sentences.map((s, i) => `
+    <li class="sentence flex items-start gap-3 bg-white rounded-xl border border-slate-200 px-3 py-2.5 cursor-pointer hover:border-indigo-300 select-none" data-i="${i}">
+      <span class="shrink-0 w-6 text-right text-xs text-slate-400 tabular-nums pt-1">${i + 1}</span>
+      <span class="shrink-0 mt-0.5 text-[10px] font-bold rounded px-1.5 py-0.5 ${s.lang === 'yue' ? 'bg-rose-100 text-rose-700' : 'bg-sky-100 text-sky-700'}">${s.lang === 'yue' ? '粵' : 'EN'}</span>
+      <p class="s-text flex-1 leading-relaxed text-[17px] break-words">${esc(s.text)}</p>
+      <i class="s-icon fa-solid fa-volume-high text-slate-300 pt-1.5"></i>
+    </li>`).join('');
+}
+
+function renderPlayerState() {
+  const n = state.sentences.length;
+  const playing = state.status === 'playing';
+  const showCursor = state.status !== 'idle' || state.idx > 0 || state.finished;
+  document.querySelectorAll('#sentenceList .sentence').forEach(li => {
+    li.classList.toggle('active', showCursor && +li.dataset.i === state.idx);
+  });
+  $('#btnPlay').innerHTML = playing ? '<i class="fa-solid fa-pause"></i>' : '<i class="fa-solid fa-play ml-0.5"></i>';
+  $('#btnPlay').disabled = !n;
+  $('#btnPrev').disabled = !n || state.idx <= 0;
+  $('#btnNext').disabled = !n || state.idx >= n - 1;
+  $('#btnStop').disabled = !n;
+  $('#btnLoop').classList.toggle('is-on', state.loopOne);
+  const label = { playing: state.loopOne ? '循環跟讀中' : state.mode === 'single' ? '單句播放中' : '連續播放中', paused: '已暫停（按播放由此句重新開始）', idle: state.finished ? '播放完畢' : '待機' }[state.status];
+  $('#statusText').innerHTML = (playing ? '<i class="fa-solid fa-circle text-[8px] text-emerald-500 mr-1 align-middle"></i>' : '') + label;
+  $('#loopInfo').textContent = state.loopOne && state.loopCount > 0 ? `· 已重複 ${state.loopCount} 遍` : '';
+  $('#progressText').textContent = n ? `${state.idx + 1} / ${n}` : '0 / 0';
+  $('#progressBar').style.width = n ? `${((state.idx + 1) / n) * 100}%` : '0%';
+}
+
+function setSpeaking(on) {
+  document.querySelectorAll('#sentenceList .sentence.speaking').forEach(li => li.classList.remove('speaking'));
+  if (on) { const li = document.querySelector(`#sentenceList .sentence[data-i="${state.idx}"]`); if (li) li.classList.add('speaking'); }
+}
+
+function scrollToActive() {
+  const li = document.querySelector(`#sentenceList .sentence[data-i="${state.idx}"]`);
+  if (!li || state.tab === 'library' && window.innerWidth < 768) return;
+  const r = li.getBoundingClientRect();
+  const bottomLimit = window.innerHeight - $('#controlBar').offsetHeight - 16;
+  if (r.top < 120 || r.bottom > bottomLimit) li.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderVoiceSelects() {
+  const opt = v => `<option value="${esc(v.voiceURI)}">${esc(v.name)} (${esc(v.lang)})${v.localService ? '' : ' ☁'}</option>`;
+  const en = state.voices.filter(isEn).sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+  const yue = state.voices.filter(isYue);
+  const otherZh = state.voices.filter(v => /^(zh|cmn)/i.test(v.lang) && !isYue(v));
+  $('#voiceEn').innerHTML = '<option value="">自動選擇</option>' + en.map(opt).join('');
+  $('#voiceYue').innerHTML = '<option value="">自動選擇</option>' +
+    (yue.length ? `<optgroup label="廣東話">${yue.map(opt).join('')}</optgroup>` : '') +
+    (otherZh.length ? `<optgroup label="其他中文（非粵語）">${otherZh.map(opt).join('')}</optgroup>` : '');
+  for (const [key, sel] of [['voiceEn', '#voiceEn'], ['voiceYue', '#voiceYue']]) {
+    const el = $(sel);
+    el.value = state.settings[key];
+    if (el.value !== state.settings[key]) el.value = '';
+  }
+  $('#voiceWarn').classList.toggle('hidden', yue.length > 0);
+}
+
+function applySettingsToUI() {
+  const s = state.settings;
+  $('#rate').value = s.rate; $('#pitch').value = s.pitch; $('#gap').value = s.gap;
+  $('#rateVal').textContent = (+s.rate).toFixed(2) + 'x';
+  $('#pitchVal').textContent = (+s.pitch).toFixed(1);
+  $('#gapVal').textContent = (+s.gap).toFixed(1) + ' 秒';
+  $('#settingsSummary').textContent = `${(+s.rate).toFixed(2)}x · 音高 ${(+s.pitch).toFixed(1)} · 停頓 ${(+s.gap).toFixed(1)}s`;
+  if (state.voices.length) renderVoiceSelects();
+}
+
+function setTab(t) {
+  state.tab = t;
+  $('#panelLibrary').classList.toggle('hidden', t !== 'library');
+  $('#panelPlayer').classList.toggle('hidden', t !== 'player');
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('is-active', b.dataset.tab === t));
+}
+
+/* ================== 事件綁定 ================== */
+function bindEvents() {
+  document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+  $('#docList').addEventListener('click', e => {
+    const actBtn = e.target.closest('[data-action]');
+    const card = e.target.closest('.doc-card');
+    if (!card) return;
+    const id = card.dataset.id;
+    if (actBtn && actBtn.dataset.action === 'edit') return openEditor(id);
+    if (actBtn && actBtn.dataset.action === 'delete') return deleteDoc(id);
+    if (id === state.currentId) setTab('player');
+    else openDoc(id, true);
+  });
+
+  $('#search').addEventListener('input', e => { state.search = e.target.value; renderDocList(); });
+  $('#btnNew').addEventListener('click', () => openEditor(null));
+  $('#btnEditCurrent').addEventListener('click', () => state.currentId && openEditor(state.currentId));
+  $('#edSave').addEventListener('click', saveEditor);
+  $('#edContent').addEventListener('input', updateEdCount);
+  $('#editorModal').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeEditor(); });
+
+  $('#sentenceList').addEventListener('click', e => {
+    const li = e.target.closest('.sentence');
+    if (li) playSentence(+li.dataset.i);
+  });
+
+  $('#btnPlay').addEventListener('click', togglePlay);
+  $('#btnStop').addEventListener('click', stop);
+  $('#btnPrev').addEventListener('click', () => step(-1));
+  $('#btnNext').addEventListener('click', () => step(1));
+  $('#btnLoop').addEventListener('click', toggleLoop);
+
+  for (const key of ['rate', 'pitch', 'gap']) {
+    $('#' + key).addEventListener('input', e => { state.settings[key] = +e.target.value; applySettingsToUI(); saveSettings(); });
+  }
+  $('#voiceEn').addEventListener('change', e => { state.settings.voiceEn = e.target.value; saveSettings(); });
+  $('#voiceYue').addEventListener('change', e => { state.settings.voiceYue = e.target.value; saveSettings(); });
+  document.querySelectorAll('[data-test]').forEach(b => b.addEventListener('click', () => testVoice(b.dataset.test)));
+  $('#btnResetSettings').addEventListener('click', () => { state.settings = { ...DEFAULT_SETTINGS }; saveSettings(); applySettingsToUI(); toast('已重設'); });
+
+  $('#btnExport').addEventListener('click', exportJSON);
+  $('#btnImport').addEventListener('click', () => $('#fileImport').click());
+  $('#fileImport').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importJSON(f); });
+
+  document.addEventListener('keydown', e => {
+    const modalOpen = !$('#editorModal').classList.contains('hidden') || !$('#dialogModal').classList.contains('hidden');
+    if (e.key === 'Escape' && !$('#editorModal').classList.contains('hidden')) return closeEditor();
+    if (modalOpen || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'ArrowLeft') step(-1);
+    else if (e.key === 'ArrowRight') step(1);
+    else if (e.key.toLowerCase() === 'l') toggleLoop();
+  });
+
+  if (synth) {
+    UNLOCK_EVENTS.forEach(ev => document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+    if ('onvoiceschanged' in synth) synth.addEventListener('voiceschanged', loadVoices);
+    // iOS 不一定觸發 voiceschanged，補做輪詢
+    let tries = 0;
+    const poll = setInterval(() => { loadVoices(); if (state.voices.length || ++tries > 20) clearInterval(poll); }, 250);
+    window.addEventListener('pagehide', () => synth.cancel());
+  }
+}
+
+/* ================== 啟動 ================== */
+function init() {
+  if (!synth) $('#noSpeech').classList.remove('hidden');
+  else if (IS_IOS) $('#iosHint').classList.remove('hidden');
+  loadData();
+  bindEvents();
+  applySettingsToUI();
+  loadVoices();
+  if (!state.voices.length) renderVoiceSelects();
+  openDoc(getDoc(state.currentId) ? state.currentId : (state.docs[0] && state.docs[0].id));
+  setTab('library');
+}
+init();
+</script>
+</body>
+</html>
